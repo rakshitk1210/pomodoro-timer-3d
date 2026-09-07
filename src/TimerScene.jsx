@@ -1,10 +1,22 @@
-import React, { useRef, useEffect, useState, useCallback } from "react";
+import React, {
+  useRef,
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
 import * as THREE from "three";
+import { CalendarDaysIcon } from "lucide-react";
 import { createLofiBed } from "./lofiBed";
 import { playButtonClick, playDialTicks, playWoosh, unlockSfx } from "./sfx";
 import { makeBackdrop, playChime } from "./lib/three-utils";
 import { TIMERS, byId } from "./timers/registry";
 import ThumbRail from "./ThumbRail";
+import SessionDrawer from "./components/SessionDrawer";
+import * as log from "./lib/sessionLog";
+import { useSessionLog } from "./hooks/useSessionLog";
+import { focusMsOnDay } from "./lib/dayLayout";
+import { fmtDuration, startOfDay } from "./lib/time";
 
 const HOME = { theta: 0, phi: 1.33 };
 
@@ -35,6 +47,16 @@ export default function TimerScene() {
   const [panel, setPanel] = useState(false);
   const [tab, setTab] = useState("form");
   const [copied, setCopied] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
+
+  /* the pill doubles as an at-a-glance daily total. closed segments only, so
+     it settles when a session ends rather than ticking with the countdown. */
+  const { sessions } = useSessionLog();
+  const todayTotal = useMemo(
+    () => focusMsOnDay(sessions, startOfDay(Date.now())),
+    [sessions]
+  );
+  const openLog = useCallback(() => setLogOpen(true), []);
 
   /* one canonical time, in seconds. both timers read and write it. */
   const [seconds, setSeconds] = useState(1500);
@@ -524,6 +546,12 @@ export default function TimerScene() {
          so a throttled background tab cannot desync it */
       const left = (endRef.current - Date.now()) / 1000;
       if (left <= 0) {
+        /* endRef, not Date.now(): rAF fires a few ms late and a 25:00
+           pomodoro logged as 25:00.017 reads as sloppy in a duration column.
+           complete() is idempotent, which matters because StrictMode
+           double-invokes this effect and an already-expired timer would
+           otherwise run this branch twice. */
+        log.complete(endRef.current);
         setSeconds(0);
         setRunning(false);
         playChime();
@@ -537,6 +565,9 @@ export default function TimerScene() {
 
   /* ---------------- control gestures ---------------- */
   S.current.onControlStart = useCallback((ctrl) => {
+    /* re-dialling ends the run. a no-op when nothing is in flight, which it
+       usually is: this fires on every control pointer-down, idle or not. */
+    log.abandon();
     setRunning(false);
     const s = Math.round(secondsRef.current);
     rawRef.current = s;
@@ -586,12 +617,22 @@ export default function TimerScene() {
         running,
       });
       if (kind === "reset") {
+        log.abandon();
         setRunning(false);
         setSeconds(setPoint);
         return;
       }
-      if (running) return setRunning(false);
+      if (running) {
+        /* pause keeps the record open, so resuming appends a segment to it
+           rather than starting a second one */
+        log.pause();
+        return setRunning(false);
+      }
       if (seconds <= 0) return;
+      log.startOrResume({
+        timerId: S.current.activeId,
+        remainingMs: seconds * 1000,
+      });
       endRef.current = Date.now() + seconds * 1000;
       ensureLofi().start();
       setRunning(true);
@@ -643,10 +684,10 @@ export default function TimerScene() {
       className="w-full h-screen flex flex-col relative overflow-hidden select-none"
       style={{ background: params.bgColor, color: "#1b241c" }}
     >
+      {/* DM Sans, .dm and .tab now live in index.css, where the font can also
+          feed --font-sans so the shadcn chrome inherits it. What is left here
+          is the design panel's own control styling. */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500&display=swap');
-        .dm { font-family: 'DM Sans', ui-sans-serif, system-ui, sans-serif; }
-        .tab { font-variant-numeric: tabular-nums; }
         input[type=range]{ -webkit-appearance:none; appearance:none; background:transparent; height:18px; width:100%; }
         input[type=range]::-webkit-slider-runnable-track{ height:2px; background:rgba(27,36,28,.22); border-radius:2px; }
         input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:13px; height:13px; margin-top:-5.5px; border-radius:50%; background:#1b241c; }
@@ -666,12 +707,35 @@ export default function TimerScene() {
         onSelect={switchTo}
       />
 
-      <button
-        onClick={() => setPanel((v) => !v)}
-        className="dm absolute top-4 right-4 z-20 px-3.5 py-2 rounded-full bg-white/70 backdrop-blur text-xs font-medium hover:bg-white transition-colors"
-      >
-        {panel ? "Close" : "Design"}
-      </button>
+      {/* a flex cluster rather than two absolutely placed pills, so adding
+          one does not mean hand-computing the other's offset */}
+      <div className="dm absolute top-4 right-4 z-20 flex items-center gap-2">
+        <button
+          onClick={openLog}
+          aria-label="Focus log"
+          className="flex items-center h-9 px-3 rounded-full bg-white/70 backdrop-blur text-xs font-medium hover:bg-white transition-colors"
+        >
+          <CalendarDaysIcon className="size-4 shrink-0" />
+          {todayTotal > 0 && (
+            <span className="tab ml-1.5 hidden sm:inline">
+              {fmtDuration(todayTotal)}
+            </span>
+          )}
+        </button>
+
+        <button
+          onClick={() => setPanel((v) => !v)}
+          className="h-9 px-3.5 rounded-full bg-white/70 backdrop-blur text-xs font-medium hover:bg-white transition-colors"
+        >
+          {panel ? "Close" : "Design"}
+        </button>
+      </div>
+
+      {/* Every prop here must stay referentially stable. TimerScene re-renders
+          ~60x/sec while a timer runs, and React.memo on the drawer is the only
+          thing keeping the calendar off that path — pass a derived array or an
+          inline arrow and the memo is defeated on every frame. */}
+      <SessionDrawer open={logOpen} onOpenChange={setLogOpen} />
 
       {panel && (
         <div className="dm absolute top-16 right-4 z-20 w-64 max-h-[76vh] overflow-y-auto rounded-2xl bg-white/80 backdrop-blur-md p-4 shadow-lg shadow-black/5">
