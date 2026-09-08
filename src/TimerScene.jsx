@@ -27,8 +27,10 @@ import {
   DEFAULT_ZOOM,
   MAX_ZOOM,
   MIN_ZOOM,
+  loadSandVolume,
   loadVolume,
   loadZoom,
+  saveSandVolume,
   saveVolume,
   saveZoom,
 } from "./lib/prefs";
@@ -76,6 +78,7 @@ export default function TimerScene() {
   const [logOpen, setLogOpen] = useState(false);
   const [volume, setVolume] = useState(loadVolume);
   const [zoom, setZoom] = useState(loadZoom);
+  const [sandVolume, setSandVolume] = useState(loadSandVolume);
   const panel = openPanel === "design";
   const togglePanel = useCallback(
     (name) => setOpenPanel((p) => (p === name ? null : name)),
@@ -115,7 +118,10 @@ export default function TimerScene() {
   volumeRef.current = volume;
   S.current.zoom = zoom;
   S.current.activeId = activeId;
-  S.current.timeState = { running, seconds, total: setPoint };
+  /* sandVolume rides along on the same state object every timer's update()
+     already receives each frame — hourglass.js reads it, the other two
+     simply never look at the field */
+  S.current.timeState = { running, seconds, total: setPoint, sandVolume };
 
   /* ---------------- scene ---------------- */
   useEffect(() => {
@@ -595,6 +601,10 @@ export default function TimerScene() {
     saveZoom(zoom);
   }, [zoom]);
 
+  useEffect(() => {
+    saveSandVolume(sandVolume);
+  }, [sandVolume]);
+
   /* create it on mount so the station list is fetched long before the
      first play, keeping that play() call inside the user gesture */
   useEffect(() => {
@@ -783,120 +793,31 @@ export default function TimerScene() {
         onSelect={switchTo}
       />
 
-      {/* a flex cluster rather than two absolutely placed pills, so adding
-          one does not mean hand-computing the other's offset */}
+      {/* a flex cluster rather than absolutely placed pills, so adding one
+          does not mean hand-computing the others' offsets */}
       <div className="dm absolute top-4 right-4 z-20 flex items-center gap-2">
-        <div className="relative">
-          <button
-            onClick={() => togglePanel("volume")}
-            aria-label="Lofi volume"
-            aria-expanded={openPanel === "volume"}
-            className="flex h-9 items-center rounded-full bg-white/70 px-3 text-xs font-medium backdrop-blur transition-colors hover:bg-white"
-          >
-            <VolIcon className="size-4 shrink-0" />
-          </button>
+        <button
+          onClick={() => togglePanel("volume")}
+          aria-label="Lofi volume"
+          aria-expanded={openPanel === "volume"}
+          className="flex h-9 items-center rounded-full bg-white/70 px-3 text-xs font-medium backdrop-blur transition-colors hover:bg-white"
+        >
+          <VolIcon className="size-4 shrink-0" />
+        </button>
 
-          {openPanel === "volume" && (
-            /* anchored under its own button rather than to the cluster's
-               right edge, so it still points at the control on any width */
-            <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl bg-white/80 p-3.5 shadow-lg shadow-black/5 backdrop-blur-md">
-              <div className="mb-2 flex items-center justify-between text-[11px]">
-                <span className="opacity-50">Lofi volume</span>
-                <span className="tab opacity-40">
-                  {Math.round(volume * 100)}%
-                </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={toggleMute}
-                  aria-label={volume === 0 ? "Unmute" : "Mute"}
-                  className="shrink-0 rounded-lg bg-black/5 p-1.5 transition-colors hover:bg-black/10"
-                >
-                  <VolIcon className="size-3.5" />
-                </button>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={volume}
-                  onChange={(e) => setVolume(parseFloat(e.target.value))}
-                  aria-label="Lofi volume"
-                />
-              </div>
-
-              {/* the bed only plays during a session, so without this a drag
-                  in silence reads as a broken slider */}
-              {!running && (
-                <p className="mt-2.5 text-[10px] leading-4 opacity-40">
-                  Plays while the timer is running.
-                </p>
-              )}
-            </div>
+        <button
+          onClick={() => togglePanel("zoom")}
+          aria-label="Zoom"
+          aria-expanded={openPanel === "zoom"}
+          className="flex h-9 items-center rounded-full bg-white/70 px-3 text-xs font-medium backdrop-blur transition-colors hover:bg-white"
+        >
+          <ZoomInIcon className="size-4 shrink-0" />
+          {zoom !== DEFAULT_ZOOM && (
+            <span className="tab ml-1.5 hidden sm:inline">
+              {Math.round(zoom * 100)}%
+            </span>
           )}
-        </div>
-
-        <div className="relative">
-          <button
-            onClick={() => togglePanel("zoom")}
-            aria-label="Zoom"
-            aria-expanded={openPanel === "zoom"}
-            className="flex h-9 items-center rounded-full bg-white/70 px-3 text-xs font-medium backdrop-blur transition-colors hover:bg-white"
-          >
-            <ZoomInIcon className="size-4 shrink-0" />
-            {zoom !== DEFAULT_ZOOM && (
-              <span className="tab ml-1.5 hidden sm:inline">
-                {Math.round(zoom * 100)}%
-              </span>
-            )}
-          </button>
-
-          {openPanel === "zoom" && (
-            <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl bg-white/80 p-3.5 shadow-lg shadow-black/5 backdrop-blur-md">
-              <div className="mb-2 flex items-center justify-between text-[11px]">
-                <span className="opacity-50">Zoom</span>
-                <span className="tab opacity-40">
-                  {Math.round(zoom * 100)}%
-                </span>
-              </div>
-
-              <input
-                type="range"
-                min={MIN_ZOOM}
-                max={MAX_ZOOM}
-                step={0.05}
-                value={zoom}
-                onChange={(e) => setZoom(parseFloat(e.target.value))}
-                aria-label="Zoom"
-              />
-
-              <div className="mt-2.5 flex gap-1.5">
-                {ZOOM_STEPS.map(([label, z]) => (
-                  <button
-                    key={label}
-                    onClick={() => setZoom(z)}
-                    aria-pressed={zoom === z}
-                    className="flex-1 rounded-lg py-1 text-[11px] font-medium transition-colors"
-                    style={{
-                      background:
-                        zoom === z ? "rgba(27,36,28,.9)" : "rgba(0,0,0,.05)",
-                      color: zoom === z ? "#fff" : "inherit",
-                    }}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              {/* 100% is whatever distance frames the active timer, which is
-                  not the same number on a phone as on a desktop */}
-              <p className="mt-2.5 text-[10px] leading-4 opacity-40">
-                100% fits the timer to your screen.
-              </p>
-            </div>
-          )}
-        </div>
+        </button>
 
         <button
           onClick={openLog}
@@ -918,6 +839,120 @@ export default function TimerScene() {
           {panel ? "Close" : "Design"}
         </button>
       </div>
+
+      {/* Volume and zoom popovers anchor to the same viewport corner as the
+          Design panel below (top-16 right-4), not to their own trigger
+          button. A per-button right-0 anchor drifts left as pills accumulate
+          to its left — with 4 pills now sharing this corner, that anchor put
+          the volume popover off the left edge of a 390px phone. Anchoring to
+          the corner instead is what the Design panel already does, and it
+          already fits every width that panel has been checked against. */}
+      {openPanel === "volume" && (
+        <div className="dm absolute top-16 right-4 z-20 w-56 rounded-2xl bg-white/80 p-3.5 shadow-lg shadow-black/5 backdrop-blur-md">
+          <div className="mb-2 flex items-center justify-between text-[11px]">
+            <span className="opacity-50">Lofi volume</span>
+            <span className="tab opacity-40">{Math.round(volume * 100)}%</span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={toggleMute}
+              aria-label={volume === 0 ? "Unmute" : "Mute"}
+              className="shrink-0 rounded-lg bg-black/5 p-1.5 transition-colors hover:bg-black/10"
+            >
+              <VolIcon className="size-3.5" />
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={volume}
+              onChange={(e) => setVolume(parseFloat(e.target.value))}
+              aria-label="Lofi volume"
+            />
+          </div>
+
+          {/* the bed only plays during a session, so without this a drag
+              in silence reads as a broken slider */}
+          {!running && (
+            <p className="mt-2.5 text-[10px] leading-4 opacity-40">
+              Plays while the timer is running.
+            </p>
+          )}
+
+          {/* the hourglass is the only timer with a second sound — its own
+              falling-sand hiss, separate from the lofi bed — so this only
+              shows up while it is the active object */}
+          {activeId === "hourglass" && (
+            <div className="mt-3 border-t border-black/10 pt-3">
+              <div className="mb-2 flex items-center justify-between text-[11px]">
+                <span className="opacity-50">Sand volume</span>
+                <span className="tab opacity-40">
+                  {Math.round(sandVolume * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={sandVolume}
+                onChange={(e) => setSandVolume(parseFloat(e.target.value))}
+                aria-label="Sand volume"
+              />
+              {!running && (
+                <p className="mt-2.5 text-[10px] leading-4 opacity-40">
+                  Plays while sand is falling.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {openPanel === "zoom" && (
+        <div className="dm absolute top-16 right-4 z-20 w-56 rounded-2xl bg-white/80 p-3.5 shadow-lg shadow-black/5 backdrop-blur-md">
+          <div className="mb-2 flex items-center justify-between text-[11px]">
+            <span className="opacity-50">Zoom</span>
+            <span className="tab opacity-40">{Math.round(zoom * 100)}%</span>
+          </div>
+
+          <input
+            type="range"
+            min={MIN_ZOOM}
+            max={MAX_ZOOM}
+            step={0.05}
+            value={zoom}
+            onChange={(e) => setZoom(parseFloat(e.target.value))}
+            aria-label="Zoom"
+          />
+
+          <div className="mt-2.5 flex gap-1.5">
+            {ZOOM_STEPS.map(([label, z]) => (
+              <button
+                key={label}
+                onClick={() => setZoom(z)}
+                aria-pressed={zoom === z}
+                className="flex-1 rounded-lg py-1 text-[11px] font-medium transition-colors"
+                style={{
+                  background:
+                    zoom === z ? "rgba(27,36,28,.9)" : "rgba(0,0,0,.05)",
+                  color: zoom === z ? "#fff" : "inherit",
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* 100% is whatever distance frames the active timer, which is
+              not the same number on a phone as on a desktop */}
+          <p className="mt-2.5 text-[10px] leading-4 opacity-40">
+            100% fits the timer to your screen.
+          </p>
+        </div>
+      )}
 
       {/* Every prop here must stay referentially stable. TimerScene re-renders
           ~60x/sec while a timer runs, and React.memo on the drawer is the only

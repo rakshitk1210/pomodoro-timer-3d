@@ -5,6 +5,12 @@ import { DEFAULT_VOLUME } from "../lofiBed";
 
 const VOLUME_KEY = "pomodoro3d.volume.v1";
 const ZOOM_KEY = "pomodoro3d.zoom.v1";
+const SAND_KEY = "pomodoro3d.sandVolume.v1";
+
+/* the sand hiss is a much quieter, sparser sound than the lofi bed by
+   design (sfx.js peaks it at 0.03), so it defaults to full and most people
+   will never need to touch it — this is for the person who wants it gone */
+export const DEFAULT_SAND_VOLUME = 1;
 
 /* 1 is the framing that fits the active timer to the viewport. Past 2 the
    camera crowds the object's own near face; below 0.6 it is a speck. */
@@ -51,5 +57,24 @@ export function saveZoom(v) {
     localStorage.setItem(ZOOM_KEY, String(clampZoom(v)));
   } catch (e) {
     /* private mode or quota: the framing still applies for this session */
+  }
+}
+
+export function loadSandVolume() {
+  try {
+    const raw = localStorage.getItem(SAND_KEY);
+    if (raw == null) return DEFAULT_SAND_VOLUME;
+    const v = Number(raw);
+    return Number.isFinite(v) ? clamp01(v) : DEFAULT_SAND_VOLUME;
+  } catch (e) {
+    return DEFAULT_SAND_VOLUME;
+  }
+}
+
+export function saveSandVolume(v) {
+  try {
+    localStorage.setItem(SAND_KEY, String(clamp01(v)));
+  } catch (e) {
+    /* private mode or quota: the level still applies for this session */
   }
 }

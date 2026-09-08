@@ -745,6 +745,10 @@ function build() {
 
   let wasFlowing = false;
   let hissOwned = false;
+  /* the level startSandHiss was last told about, so a slider dragged mid
+     pour retargets the running hiss instead of waiting for the next
+     flowing/not-flowing edge */
+  let hissLevel = 1;
   const flip = { on: false, t: 0, fromLevel: 0, fromPile: -H, toLevel: 0 };
 
   /* ---------------- interaction wiring ---------------- */
@@ -991,11 +995,21 @@ function build() {
       const flowing =
         !!front && !flip.on && state.running && state.seconds > 0.05;
       updateStream(dt, flowing);
+      const sandLevel = Math.max(0, Math.min(1, state.sandVolume ?? 1));
       if (flowing !== wasFlowing) {
         wasFlowing = flowing;
         hissOwned = flowing;
-        if (flowing) startSandHiss(1);
-        else stopSandHiss();
+        if (flowing) {
+          startSandHiss(sandLevel);
+          hissLevel = sandLevel;
+        } else {
+          stopSandHiss();
+        }
+      } else if (flowing && Math.abs(sandLevel - hissLevel) > 0.005) {
+        /* startSandHiss on an already-running hiss just retargets its gain,
+           so this is a slider move, not a restart */
+        startSandHiss(sandLevel);
+        hissLevel = sandLevel;
       }
     },
 
