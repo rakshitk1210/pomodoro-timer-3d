@@ -545,9 +545,6 @@ export default function TimerScene() {
     if (!lofiRef.current) lofiRef.current = createLofiBed(volumeRef.current);
     return lofiRef.current;
   };
-
-  /* the bed may not exist yet — the level is still saved, and createLofiBed
-     picks it up from volumeRef on the first start */
   useEffect(() => {
     lofiRef.current?.setVolume(volume);
     saveVolume(volume);
@@ -568,7 +565,16 @@ export default function TimerScene() {
     setVolOpen((v) => !v);
     setPanel(false);
   }, []);
-  useEffect(() => () => lofiRef.current?.dispose(), []);
+
+  /* create it on mount so the station list is fetched long before the
+     first play, keeping that play() call inside the user gesture */
+  useEffect(() => {
+    const bed = ensureLofi();
+    return () => {
+      bed.dispose();
+      lofiRef.current = null;
+    };
+  }, []);
   useEffect(() => {
     if (!running) lofiRef.current?.stop();
   }, [running]);
