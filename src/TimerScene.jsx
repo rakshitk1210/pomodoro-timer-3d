@@ -11,6 +11,7 @@ import {
   Volume1Icon,
   Volume2Icon,
   VolumeXIcon,
+  ZoomInIcon,
 } from "lucide-react";
 import { createLofiBed, DEFAULT_VOLUME } from "./lofiBed";
 import { playButtonClick, playDialTicks, playWoosh, unlockSfx } from "./sfx";
@@ -22,7 +23,15 @@ import * as log from "./lib/sessionLog";
 import { useSessionLog } from "./hooks/useSessionLog";
 import { focusMsOnDay } from "./lib/dayLayout";
 import { fmtDuration, startOfDay } from "./lib/time";
-import { loadVolume, saveVolume } from "./lib/prefs";
+import {
+  DEFAULT_ZOOM,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  loadVolume,
+  loadZoom,
+  saveVolume,
+  saveZoom,
+} from "./lib/prefs";
 
 const HOME = { theta: 0, phi: 1.33 };
 
@@ -35,6 +44,14 @@ const FLICK_MAX = 15;
 const AXIS_MIN_PX = 60;
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* the three framings worth one tap. Fit is the auto distance the scene
+   already computes per timer and viewport. */
+const ZOOM_STEPS = [
+  ["Fit", 1],
+  ["1.5x", 1.5],
+  ["2x", 2],
+];
 
 function initialParams() {
   const out = {};
@@ -50,12 +67,20 @@ export default function TimerScene() {
 
   const [activeId, setActiveId] = useState(TIMERS[0].id);
   const [paramsByTimer, setParamsByTimer] = useState(initialParams);
-  const [panel, setPanel] = useState(false);
+  /* null | "volume" | "zoom" | "design" — the pills share a corner, so only
+     one card is open at a time. A boolean each would mean every pill having
+     to close every other. */
+  const [openPanel, setOpenPanel] = useState(null);
   const [tab, setTab] = useState("form");
   const [copied, setCopied] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
-  const [volOpen, setVolOpen] = useState(false);
   const [volume, setVolume] = useState(loadVolume);
+  const [zoom, setZoom] = useState(loadZoom);
+  const panel = openPanel === "design";
+  const togglePanel = useCallback(
+    (name) => setOpenPanel((p) => (p === name ? null : name)),
+    []
+  );
 
   /* the pill doubles as an at-a-glance daily total. closed segments only, so
      it settles when a session ends rather than ticking with the countdown. */
@@ -88,6 +113,7 @@ export default function TimerScene() {
 
   secondsRef.current = seconds;
   volumeRef.current = volume;
+  S.current.zoom = zoom;
   S.current.activeId = activeId;
   S.current.timeState = { running, seconds, total: setPoint };
 
@@ -408,7 +434,12 @@ export default function TimerScene() {
       const halfY = def.frameHalf ?? 2.2;
       const halfX = def.frameHalfX ?? halfY;
       const tanF = Math.tan((camera.fov * Math.PI) / 360);
-      return Math.max(halfY / tanF, halfX / (tanF * camera.aspect));
+      const fit = Math.max(halfY / tanF, halfX / (tanF * camera.aspect));
+      /* zoom divides the fit distance, so 1 is still whatever framing the
+         active timer and viewport ask for and the setting rides on top.
+         Read through the ref bag: this effect never re-runs, so a captured
+         value would freeze at whatever the first render had. */
+      return fit / (S.current.zoom || 1);
     }
 
     function resize() {
@@ -563,11 +594,9 @@ export default function TimerScene() {
     });
   }, []);
 
-  /* the two popovers share the same corner, so only one opens at a time */
-  const toggleVolPanel = useCallback(() => {
-    setVolOpen((v) => !v);
-    setPanel(false);
-  }, []);
+  useEffect(() => {
+    saveZoom(zoom);
+  }, [zoom]);
   useEffect(() => () => lofiRef.current?.dispose(), []);
   useEffect(() => {
     if (!running) lofiRef.current?.stop();
@@ -753,15 +782,15 @@ export default function TimerScene() {
       <div className="dm absolute top-4 right-4 z-20 flex items-center gap-2">
         <div className="relative">
           <button
-            onClick={toggleVolPanel}
+            onClick={() => togglePanel("volume")}
             aria-label="Lofi volume"
-            aria-expanded={volOpen}
+            aria-expanded={openPanel === "volume"}
             className="flex h-9 items-center rounded-full bg-white/70 px-3 text-xs font-medium backdrop-blur transition-colors hover:bg-white"
           >
             <VolIcon className="size-4 shrink-0" />
           </button>
 
-          {volOpen && (
+          {openPanel === "volume" && (
             /* anchored under its own button rather than to the cluster's
                right edge, so it still points at the control on any width */
             <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl bg-white/80 p-3.5 shadow-lg shadow-black/5 backdrop-blur-md">
@@ -802,6 +831,67 @@ export default function TimerScene() {
           )}
         </div>
 
+        <div className="relative">
+          <button
+            onClick={() => togglePanel("zoom")}
+            aria-label="Zoom"
+            aria-expanded={openPanel === "zoom"}
+            className="flex h-9 items-center rounded-full bg-white/70 px-3 text-xs font-medium backdrop-blur transition-colors hover:bg-white"
+          >
+            <ZoomInIcon className="size-4 shrink-0" />
+            {zoom !== DEFAULT_ZOOM && (
+              <span className="tab ml-1.5 hidden sm:inline">
+                {Math.round(zoom * 100)}%
+              </span>
+            )}
+          </button>
+
+          {openPanel === "zoom" && (
+            <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl bg-white/80 p-3.5 shadow-lg shadow-black/5 backdrop-blur-md">
+              <div className="mb-2 flex items-center justify-between text-[11px]">
+                <span className="opacity-50">Zoom</span>
+                <span className="tab opacity-40">
+                  {Math.round(zoom * 100)}%
+                </span>
+              </div>
+
+              <input
+                type="range"
+                min={MIN_ZOOM}
+                max={MAX_ZOOM}
+                step={0.05}
+                value={zoom}
+                onChange={(e) => setZoom(parseFloat(e.target.value))}
+                aria-label="Zoom"
+              />
+
+              <div className="mt-2.5 flex gap-1.5">
+                {ZOOM_STEPS.map(([label, z]) => (
+                  <button
+                    key={label}
+                    onClick={() => setZoom(z)}
+                    aria-pressed={zoom === z}
+                    className="flex-1 rounded-lg py-1 text-[11px] font-medium transition-colors"
+                    style={{
+                      background:
+                        zoom === z ? "rgba(27,36,28,.9)" : "rgba(0,0,0,.05)",
+                      color: zoom === z ? "#fff" : "inherit",
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* 100% is whatever distance frames the active timer, which is
+                  not the same number on a phone as on a desktop */}
+              <p className="mt-2.5 text-[10px] leading-4 opacity-40">
+                100% fits the timer to your screen.
+              </p>
+            </div>
+          )}
+        </div>
+
         <button
           onClick={openLog}
           aria-label="Focus log"
@@ -816,10 +906,7 @@ export default function TimerScene() {
         </button>
 
         <button
-          onClick={() => {
-            setPanel((v) => !v);
-            setVolOpen(false);
-          }}
+          onClick={() => togglePanel("design")}
           className="h-9 px-3.5 rounded-full bg-white/70 backdrop-blur text-xs font-medium hover:bg-white transition-colors"
         >
           {panel ? "Close" : "Design"}
