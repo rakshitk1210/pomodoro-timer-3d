@@ -1,5 +1,8 @@
 const FADE_SEC = 3;
-const TARGET_VOLUME = 0.45;
+/* a slider drag should feel immediate, but stepping the gain outright
+   crackles, so give it just enough ramp to smooth the edge */
+const SET_SEC = 0.06;
+export const DEFAULT_VOLUME = 0.45;
 
 const trackUrls = Object.values(
   import.meta.glob("../Lofi/*.mp3", {
@@ -8,6 +11,8 @@ const trackUrls = Object.values(
     import: "default",
   })
 );
+
+const clamp01 = (v) => Math.max(0, Math.min(1, Number(v) || 0));
 
 function shuffle(list) {
   const next = [...list];
@@ -18,7 +23,7 @@ function shuffle(list) {
   return next;
 }
 
-export function createLofiBed() {
+export function createLofiBed(initialVolume = DEFAULT_VOLUME) {
   const audio = new Audio();
   audio.preload = "auto";
   audio.setAttribute("playsinline", "");
@@ -34,6 +39,9 @@ export function createLofiBed() {
   let index = 0;
   let wantPlay = false;
   let stopTimer = 0;
+  /* the level start() fades up to. held here rather than read from the gain
+     node, whose value is 0 whenever the bed is stopped. */
+  let target = clamp01(initialVolume);
 
   function clearStopTimer() {
     if (stopTimer) clearTimeout(stopTimer);
@@ -74,6 +82,13 @@ export function createLofiBed() {
   audio.addEventListener("ended", playNext);
 
   return {
+    /* Only touches the gain while the bed is actually playing: setting it
+       during a stopped session would fade the music up with no timer
+       running. Either way the new level is remembered for the next start. */
+    setVolume(v) {
+      target = clamp01(v);
+      if (wantPlay) ramp(target, SET_SEC);
+    },
     start() {
       if (!trackUrls.length) return;
       wantPlay = true;
@@ -82,7 +97,7 @@ export function createLofiBed() {
       if (!audio.src) loadCurrent();
       const kick = () => {
         if (!wantPlay) return;
-        ramp(TARGET_VOLUME, FADE_SEC);
+        ramp(target, FADE_SEC);
       };
       const play = () => audio.play().then(kick).catch(() => {});
       if (ctx.state === "suspended") ctx.resume().then(play).catch(() => {});

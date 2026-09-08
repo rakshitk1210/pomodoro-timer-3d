@@ -6,8 +6,13 @@ import React, {
   useMemo,
 } from "react";
 import * as THREE from "three";
-import { CalendarDaysIcon } from "lucide-react";
-import { createLofiBed } from "./lofiBed";
+import {
+  CalendarDaysIcon,
+  Volume1Icon,
+  Volume2Icon,
+  VolumeXIcon,
+} from "lucide-react";
+import { createLofiBed, DEFAULT_VOLUME } from "./lofiBed";
 import { playButtonClick, playDialTicks, playWoosh, unlockSfx } from "./sfx";
 import { makeBackdrop, playChime } from "./lib/three-utils";
 import { TIMERS, byId } from "./timers/registry";
@@ -17,6 +22,7 @@ import * as log from "./lib/sessionLog";
 import { useSessionLog } from "./hooks/useSessionLog";
 import { focusMsOnDay } from "./lib/dayLayout";
 import { fmtDuration, startOfDay } from "./lib/time";
+import { loadVolume, saveVolume } from "./lib/prefs";
 
 const HOME = { theta: 0, phi: 1.33 };
 
@@ -48,6 +54,8 @@ export default function TimerScene() {
   const [tab, setTab] = useState("form");
   const [copied, setCopied] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  const [volOpen, setVolOpen] = useState(false);
+  const [volume, setVolume] = useState(loadVolume);
 
   /* the pill doubles as an at-a-glance daily total. closed segments only, so
      it settles when a session ends rather than ticking with the countdown. */
@@ -69,11 +77,17 @@ export default function TimerScene() {
   const lastQRef = useRef(1500);
   const secondsRef = useRef(1500);
   const lofiRef = useRef(null);
+  /* the bed is built lazily on the first start, and onButton's callback can
+     hold a stale render, so read the level through a ref like `seconds` does */
+  const volumeRef = useRef(volume);
+  /* the level to come back to when unmuting */
+  const preMuteRef = useRef(volume || DEFAULT_VOLUME);
 
   const mod = byId(activeId);
   const params = paramsByTimer[activeId];
 
   secondsRef.current = seconds;
+  volumeRef.current = volume;
   S.current.activeId = activeId;
   S.current.timeState = { running, seconds, total: setPoint };
 
@@ -528,9 +542,32 @@ export default function TimerScene() {
 
   /* ---------------- lofi bed ---------------- */
   const ensureLofi = () => {
-    if (!lofiRef.current) lofiRef.current = createLofiBed();
+    if (!lofiRef.current) lofiRef.current = createLofiBed(volumeRef.current);
     return lofiRef.current;
   };
+
+  /* the bed may not exist yet — the level is still saved, and createLofiBed
+     picks it up from volumeRef on the first start */
+  useEffect(() => {
+    lofiRef.current?.setVolume(volume);
+    saveVolume(volume);
+  }, [volume]);
+
+  const toggleMute = useCallback(() => {
+    setVolume((v) => {
+      if (v > 0) {
+        preMuteRef.current = v;
+        return 0;
+      }
+      return preMuteRef.current || DEFAULT_VOLUME;
+    });
+  }, []);
+
+  /* the two popovers share the same corner, so only one opens at a time */
+  const toggleVolPanel = useCallback(() => {
+    setVolOpen((v) => !v);
+    setPanel(false);
+  }, []);
   useEffect(() => () => lofiRef.current?.dispose(), []);
   useEffect(() => {
     if (!running) lofiRef.current?.stop();
@@ -679,6 +716,10 @@ export default function TimerScene() {
 
   const fields = tab === "form" ? mod.fields.form : mod.fields.light;
 
+  /* the pill icon reads the level back, so the cluster shows mute at a glance */
+  const VolIcon =
+    volume === 0 ? VolumeXIcon : volume < 0.5 ? Volume1Icon : Volume2Icon;
+
   return (
     <div
       className="w-full h-screen flex flex-col relative overflow-hidden select-none"
@@ -710,6 +751,57 @@ export default function TimerScene() {
       {/* a flex cluster rather than two absolutely placed pills, so adding
           one does not mean hand-computing the other's offset */}
       <div className="dm absolute top-4 right-4 z-20 flex items-center gap-2">
+        <div className="relative">
+          <button
+            onClick={toggleVolPanel}
+            aria-label="Lofi volume"
+            aria-expanded={volOpen}
+            className="flex h-9 items-center rounded-full bg-white/70 px-3 text-xs font-medium backdrop-blur transition-colors hover:bg-white"
+          >
+            <VolIcon className="size-4 shrink-0" />
+          </button>
+
+          {volOpen && (
+            /* anchored under its own button rather than to the cluster's
+               right edge, so it still points at the control on any width */
+            <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl bg-white/80 p-3.5 shadow-lg shadow-black/5 backdrop-blur-md">
+              <div className="mb-2 flex items-center justify-between text-[11px]">
+                <span className="opacity-50">Lofi volume</span>
+                <span className="tab opacity-40">
+                  {Math.round(volume * 100)}%
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={toggleMute}
+                  aria-label={volume === 0 ? "Unmute" : "Mute"}
+                  className="shrink-0 rounded-lg bg-black/5 p-1.5 transition-colors hover:bg-black/10"
+                >
+                  <VolIcon className="size-3.5" />
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={volume}
+                  onChange={(e) => setVolume(parseFloat(e.target.value))}
+                  aria-label="Lofi volume"
+                />
+              </div>
+
+              {/* the bed only plays during a session, so without this a drag
+                  in silence reads as a broken slider */}
+              {!running && (
+                <p className="mt-2.5 text-[10px] leading-4 opacity-40">
+                  Plays while the timer is running.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
         <button
           onClick={openLog}
           aria-label="Focus log"
@@ -724,7 +816,10 @@ export default function TimerScene() {
         </button>
 
         <button
-          onClick={() => setPanel((v) => !v)}
+          onClick={() => {
+            setPanel((v) => !v);
+            setVolOpen(false);
+          }}
           className="h-9 px-3.5 rounded-full bg-white/70 backdrop-blur text-xs font-medium hover:bg-white transition-colors"
         >
           {panel ? "Close" : "Design"}
